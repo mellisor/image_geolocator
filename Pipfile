@@ -9,6 +9,3 @@ verify_ssl = true
 webdavclient3 = "*"
 geopy = "*"
 exif = "*"
-
-[requires]
-python_version = "3.7"
