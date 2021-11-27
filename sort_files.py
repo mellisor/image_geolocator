@@ -9,12 +9,15 @@ import time
 
 from srt_parser import SrtParser
 
-def get_label(location: Location):
+def get_location_label(location: Location):
     address = location.raw['address']
     label = address.get('city', '')
     label = label if label else address.get('town', '')
     label = label if label else address.get('county', '')
     return label
+
+def prompt_label(day: str):
+    return input(f'Label for {day}: ')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-l', '--label', action='store_true', help='request explicit labels')
@@ -95,60 +98,64 @@ for file in files:
     
         label = ''
 
+        # If explicit label is specified, request one for each day
+        if args.label and not day in labels:
+            label = prompt_label(day)
+            
         # If this is a video and srt is specified
-        if not is_image and args.srt:
+        elif not is_image and args.srt:
             srt_file = ''.join(old_file.split('.')[:-1]) + '.SRT'
             
             # Make sure the srt file exists before continuing
             if os.path.exists(srt_file):
                 record = list(srt_parser.parse(srt_file))[0]
                 location = geolocator.reverse(f'{record.latitude},{record.longitude}')
-                label = get_label(location)
-                label = label if label else input(f'Label for {day}: ')
+                label = get_location_label(location)
+                label = label if label else prompt_label(day)
         
-        # If the srt step didn't find the label
-        if not label:
-            # If explicit label is specified, request one
-            if (args.label or not is_image) and not day in labels:
-                label = input(f'Label for {day}: ')
-                labels[day] = label
+        # Attempt to geolocate image
+        elif is_image:
+            # Get longitude/latitude from geotag
+            latitude_ref = image.get('gps_latitude_ref')
+            latitude = image.get('gps_latitude')
+            longitude_ref = image.get('gps_longitude_ref')
+            longitude = image.get('gps_longitude')
+            city = None
+            
+            if latitude is not None and longitude is not None:
+                # Calculate longitude/latitude from deg/min/s
+                actual_latitude = (latitude[0] + latitude[1] / 60 + latitude[2] / 3600) * (1 if latitude_ref == 'N' else -1)
+                actual_longitude = (longitude[0] + longitude[1] / 60 + longitude[2] / 3600) * (1 if longitude_ref == 'E' else -1)
 
-            # Attempt to geolocate image
+                # Geolocate
+                location = geolocator.reverse(f'{actual_latitude},{actual_longitude}')
+
+                # Print location if verbose
+                if args.verbose:
+                    print(location)
+
+                # Sleep to avoid hitting api limits
+                time.sleep(args.sleep)
+
+                # Use the city/town/county as label
+                city = get_location_label(location)
+
+            # If a location could be found, set that as the label
+            if city:
+                label = city
+            # If there is already a label for this day, use it
+            elif day in labels:
+                label = labels[day]
+            # Otherwise, request a label
             else:
-                # Get longitude/latitude from geotag
-                latitude_ref = image.get('gps_latitude_ref')
-                latitude = image.get('gps_latitude')
-                longitude_ref = image.get('gps_longitude_ref')
-                longitude = image.get('gps_longitude')
-                city = None
-                
-                if latitude is not None and longitude is not None:
-                    # Calculate longitude/latitude from deg/min/s
-                    actual_latitude = (latitude[0] + latitude[1] / 60 + latitude[2] / 3600) * (1 if latitude_ref == 'N' else -1)
-                    actual_longitude = (longitude[0] + longitude[1] / 60 + longitude[2] / 3600) * (1 if longitude_ref == 'E' else -1)
+                label = input(f'Label for {day}: ')
 
-                    # Geolocate
-                    location = geolocator.reverse(f'{actual_latitude},{actual_longitude}')
-
-                    # Print location if verbose
-                    if args.verbose:
-                        print(location)
-
-                    # Sleep to avoid hitting api limits
-                    time.sleep(args.sleep)
-
-                    # Use the city/town/county as label
-                    city = get_label(location)
-
-                # If a location could be found, set that as the label
-                if city:
-                    label = city
-                # If there is already a label for this day, use it
-                elif day in labels:
-                    label = labels[day]
-                # Otherwise, request a label
-                else:
-                    label = input(f'Label for {day}: ')
+        # If label has not been found, default to first label from this day and prompt for label if not found
+        if not label:
+            if day in labels:
+                label = labels[day]
+            
+            label = prompt_label(day)
         
         # Populate label map if necessary
         if not day in labels:
